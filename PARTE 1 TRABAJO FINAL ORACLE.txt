@@ -1,0 +1,285 @@
+--VIVIANA CAMACHO FONSECA
+--PROYECTO FINAL ORACLE
+--JUEVES 21/04/2016
+
+
+drop table ingreso;
+drop table USUARIOS;
+drop table membresia;
+drop table UBICACIONES;
+drop table CONTROL_CAMBIOS;
+
+drop sequence seq_auto_inc_idmembresia;
+drop sequence seq_auto_inc_idubicacion;
+drop sequence seq_auto_inc_idusuario;
+drop sequence seq_auto_inc_idingreso;
+
+--CREACION DE TABLAS
+
+
+CREATE TABLE USUARIOS(
+idUsuario INT NOT NULL,
+nombre VARCHAR2(20) NOT NULL,
+apellido1 VARCHAR2(20) NOT NULL,
+apellido2 VARCHAR2(20) NOT NULL,
+telefono VARCHAR2(20) NOT NULL,
+idMembresia INT NOT NULL,
+idUbicacion INT NOT NULL,
+fecha_inicio DATE NOT NULL,
+fecha_renovacion DATE NOT NULL
+);
+
+CREATE TABLE MEMBRESIA(
+idMembresia INT NOT NULL,
+nombre VARCHAR2(20) NOT NULL,
+descripcion VARCHAR(100)
+);
+
+CREATE TABLE INGRESO(
+idIngreso INT NOT NULL,
+idUsuario INT NOT NULL,
+fecha DATE NOT NULL
+);
+
+CREATE TABLE UBICACIONES(
+idUbicacion INT NOT NULL,
+ciudad VARCHAR2(20)
+);
+
+--PRIMARY KEY 
+ALTER TABLE USUARIOS 
+ADD (CONSTRAINT pk_usuarios primary key(idUsuario));
+
+ALTER TABLE MEMBRESIA
+ADD (CONSTRAINT pk_membresia primary key(idMembresia));
+
+ALTER TABLE INGRESO
+ADD (CONSTRAINT pk_ingreso primary key(idIngreso));
+
+ALTER TABLE UBICACIONES
+ADD (CONSTRAINT pk_ubicacion primary key(idUbicacion));
+
+--FOREIGN KEY
+ALTER TABLE USUARIOS
+ADD CONSTRAINT fk_membresia
+FOREIGN KEY (idMembresia)
+REFERENCES MEMBRESIA (idMembresia);
+
+ALTER TABLE USUARIOS
+ADD CONSTRAINT fk_ubicacion
+FOREIGN KEY (idUbicacion)
+REFERENCES UBICACIONES (idUbicacion);
+
+ALTER TABLE INGRESO
+ADD CONSTRAINT fk_usuario
+FOREIGN KEY (idUsuario)
+REFERENCES USUARIOS (idUsuario);
+
+--SECUENCIA
+CREATE SEQUENCE seq_auto_inc_idUsuario
+START WITH 1
+INCREMENT BY 1
+NOMAXVALUE;
+
+CREATE SEQUENCE seq_auto_inc_idMembresia
+START WITH 1
+INCREMENT BY 1
+NOMAXVALUE;
+
+CREATE SEQUENCE seq_auto_inc_idIngreso
+START WITH 1
+INCREMENT BY 1
+NOMAXVALUE;
+
+CREATE SEQUENCE seq_auto_inc_idUbicacion
+START WITH 1
+INCREMENT BY 1
+NOMAXVALUE;
+
+
+--DISPARADORES
+
+CREATE OR REPLACE TRIGGER TRG_ESTADO_MEMBRESIA
+  BEFORE INSERT
+  on INGRESO
+  for each row
+  DECLARE
+  v_nombre_membresia VARCHAR2(20);
+  v_fecha_renovacion DATE;
+  v_idMembresia int;
+  v_fecha_final DATE;
+  BEGIN
+  SELECT fecha_renovacion,idMembresia
+  INTO v_fecha_renovacion,v_idMembresia
+  FROM USUARIOS WHERE idUsuario=:NEW.idUsuario;
+  
+  SELECT nombre INTO v_nombre_membresia
+  FROM MEMBRESIA WHERE idMembresia = v_idMembresia;
+  
+  IF(TRIM(v_nombre_membresia) ='MEMBRESIA_MENSUAL') THEN
+  v_fecha_final:= v_fecha_renovacion + 30; 
+  ELSIF(TRIM(v_nombre_membresia) ='MEMBRESIA_ANUAL') THEN
+  v_fecha_final:= v_fecha_renovacion + 365; 
+  ELSIF(TRIM(v_nombre_membresia) ='MEMBRESIA_SEMANAL') THEN
+  v_fecha_final:= v_fecha_renovacion + 7; 
+  ELSIF(TRIM(v_nombre_membresia) ='MEMBRESIA_DIARIA') THEN
+  v_fecha_final:= v_fecha_renovacion + 1; 
+  END IF;
+  DBMS_OUTPUT.PUT_LINE(v_fecha_final);
+ 
+  IF(sysdate > v_fecha_final) THEN
+  DBMS_OUTPUT.PUT_LINE('MEMBRESIA EXPIRADA, POR FAVOR RENOVARLA');
+  raise_application_error(-20999, 'MEMBRESIA EXPIRADA, POR FAVOR RENOVARLA');
+  ELSE
+  DBMS_OUTPUT.PUT_LINE('MEMBRESIA ACTIVA');
+  END IF;
+END TRG_ESTADO_MEMBRESIA;
+
+
+CREATE TABLE CONTROL_CAMBIOS(
+  usuario varchar2(30),
+  fecha date,
+  datoanterior varchar2(30),
+  datonuevo varchar2(30)
+ );
+
+
+CREATE OR REPLACE TRIGGER TRG_ACTUALIZAR_USUARIO
+BEFORE UPDATE
+ON USUARIOS
+FOR EACH ROW
+BEGIN
+  IF updating('telefono') THEN
+  INSERT INTO CONTROL_CAMBIOS values(user,sysdate, :old.telefono, :new.telefono);
+  end if;
+  IF updating('membresia') THEN
+  INSERT INTO CONTROL_CAMBIOS values(user,sysdate, :old.idMembresia, :new.idMembresia);
+  END IF;
+  IF updating('ubicacion') THEN
+  INSERT INTO CONTROL_CAMBIOS values(user,sysdate, :old.idUbicacion, :new.idUbicacion);
+  END IF;
+END TRG_ACTUALIZAR_USUARIO;
+ 
+CREATE OR REPLACE TRIGGER TRG_ACTUALIZAR_MEMBRESIA
+BEFORE UPDATE
+ON MEMBRESIA
+FOR EACH ROW
+BEGIN
+  IF updating('idMembresia') THEN
+  INSERT INTO CONTROL_CAMBIOS VALUES(user,sysdate, :old.idMembresia, :new.idMembresia);
+  END IF;
+  IF updating('nombre') THEN
+   INSERT INTO CONTROL_CAMBIOS VALUES(user,sysdate, :old.nombre, :new.nombre);
+  END IF;
+END TRG_ACTUALIZAR_MEMBRESIA;
+ 
+CREATE OR REPLACE TRIGGER TRG_INSERTAR_USUARIO
+  BEFORE INSERT
+  on USUARIOS
+  for each row
+  BEGIN
+  INSERT INTO CONTROL_CAMBIOS VALUES(user,sysdate, null, :new.nombre);
+  END TRG_INSERTAR_USUARIO;
+ 
+CREATE OR REPLACE TRIGGER TRG_ELIMINAR_USUARIOS
+BEFORE DELETE
+ON USUARIOS
+FOR EACH ROW
+ BEGIN
+   INSERT INTO controlCambios values(user,sysdate, :old.nombre, null);
+ END TRG_ELIMINAR_USUARIOS;
+ 
+--PAQUETE CON PROCEDIMINETO
+CREATE OR REPLACE PACKAGE P_CONTROL_ACTUALIZACION IS
+PROCEDURE p_renovar_membresia (p_idUsuario IN USUARIOS.idUsuario%TYPE,p_membresia IN MEMBRESIA.idMembresia%TYPE);
+END P_CONTROL_ACTUALIZACION;
+
+CREATE OR REPLACE PACKAGE BODY P_CONTROL_ACTUALIZACION
+IS
+PROCEDURE p_renovar_membresia (p_idUsuario IN USUARIOS.idUsuario%TYPE,p_membresia IN MEMBRESIA.idMembresia%TYPE)
+AS
+VALOR EXCEPTION;
+BEGIN
+
+    UPDATE USUARIOS SET FECHA_RENOVACION=sysdate,idMEMBRESIA=p_membresia
+    WHERE idUsuario = p_idUsuario;
+    
+    DBMS_OUTPUT.PUT_LINE('MEMBRESIA ACTUALIZADA');
+    
+    IF SQL%NOTFOUND THEN
+       RAISE VALOR;
+    END IF;
+
+EXCEPTION 
+
+WHEN VALOR THEN
+    RAISE_APPLICATION_ERROR(-20202,'ID DE USUARIO NO EXISTE');
+    
+END;
+END P_CONTROL_ACTUALIZACION;
+
+--COMO UTILIZAR EL PAQUETE
+BEGIN
+  P_CONTROL_ACTUALIZACION.P_RENOVAR_MEMBRESIA(4,4);
+END;
+
+ 
+--INSERTAR DATOS TABLA MEMBRESIA
+INSERT INTO MEMBRESIA VALUES(seq_auto_inc_idMembresia.nextval,'MEMBRESIA_MENSUAL','Esta es una membresia Mensual');
+INSERT INTO MEMBRESIA VALUES(seq_auto_inc_idMembresia.nextval,'MEMBRESIA_ANUAL','Esta es una membresia Anual');
+INSERT INTO MEMBRESIA VALUES(seq_auto_inc_idMembresia.nextval,'MEMBRESIA_SEMANAL','Esta es una membresia Semanal');
+INSERT INTO MEMBRESIA VALUES(seq_auto_inc_idMembresia.nextval,'MEMBRESIA_DIARIA','Esta es una membresia Diaria');
+--SELECT * FROM MEMBRESIA;
+
+--INSERTAR DATOS TABLA UBICACIONES
+INSERT INTO UBICACIONES VALUES(seq_auto_inc_idUbicacion.nextval,'ALAJUELA');
+INSERT INTO UBICACIONES VALUES(seq_auto_inc_idUbicacion.nextval,'SAN JOSE');
+INSERT INTO UBICACIONES VALUES(seq_auto_inc_idUbicacion.nextval,'HEREDIA');
+--SELECT * FROM UBICACIONES;
+
+--INSERTAR DATOS TABLA USUARIOS
+INSERT INTO USUARIOS VALUES(seq_auto_inc_idUsuario.nextval,'Viviana','Camacho','Fonseca','8721-79-58',1,1,'01/04/2016','01/04/2016');
+INSERT INTO USUARIOS VALUES(seq_auto_inc_idUsuario.nextval,'Pedro','Mora','Fallas','8332-44-78',2,2,'15/06/2014','15/06/2016');
+INSERT INTO USUARIOS VALUES(seq_auto_inc_idUsuario.nextval,'Marta','Leon','Arias','2443-21-56',3,3,'30/11/2014','30/11/2014');
+SELECT * FROM USUARIOS;
+--INSERTAR DATOS TABLA USUARIO CON BLOQUE PL
+DECLARE
+
+v_idUsuario USUARIOS.IDUSUARIO%TYPE;
+v_nombre USUARIOS.NOMBRE%TYPE;
+v_apellido1 USUARIOS.APELLIDO1%TYPE;
+v_apellido2 USUARIOS.APELLIDO2%TYPE;
+v_telefono USUARIOS.TELEFONO%TYPE;
+v_idMembresia USUARIOS.IDMEMBRESIA%TYPE;
+v_ubicacion USUARIOS.IDUBICACION%TYPE;
+v_fecha_inicio USUARIOS.FECHA_INICIO%TYPE;
+v_fecha_renovacion USUARIOS.FECHA_RENOVACION%TYPE;
+BEGIN
+v_idUsuario:=seq_auto_inc_idUsuario.nextval;
+v_nombre:= 'Carlos';
+v_apellido1:= 'Ramos';
+v_apellido2:= 'Vargas';
+v_telefono:= '8765-90-87';
+v_idMembresia:= 4;
+v_ubicacion:= 3;
+v_fecha_inicio:= '01/04/2016';
+v_fecha_renovacion:= '19/4/2016';
+INSERT INTO USUARIOS
+  VALUES (v_idUsuario, v_nombre, v_apellido1, v_apellido2,v_telefono,v_idmembresia,v_ubicacion,v_fecha_inicio,v_fecha_renovacion);
+  DBMS_OUTPUT.PUT_LINE ('BIENVENIDO! ' || v_nombre);
+COMMIT;
+END;
+
+--INSERTAR A INGRESO
+INSERT INTO INGRESO VALUES(seq_auto_inc_idIngreso.nextval,1,sysdate);
+INSERT INTO INGRESO VALUES(seq_auto_inc_idIngreso.nextval,2,sysdate);
+INSERT INTO INGRESO VALUES(seq_auto_inc_idIngreso.nextval,3,sysdate);
+INSERT INTO INGRESO VALUES(seq_auto_inc_idIngreso.nextval,4,sysdate);
+                        
+--MOSTRAR DATOS DE TABLAS 
+SELECT * FROM INGRESO;
+SELECT * FROM MEMBRESIA;
+SELECT * FROM USUARIOS;
+SELECT * FROM UBICACIONES;
+
+SELECT SYSDATE FROM DUAL;
